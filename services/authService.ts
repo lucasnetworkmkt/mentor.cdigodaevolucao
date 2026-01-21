@@ -112,7 +112,7 @@ export const authService = {
     const user = users.find((u) => u.email === normalizedEmail && u.password === password);
 
     if (!user) {
-      throw new Error("Credenciais inválidas. Verifique e-mail e senha.");
+      throw new Error("Credenciais inválidas ou usuário não encontrado neste dispositivo.");
     }
 
     const userProfile: UserProfile = {
