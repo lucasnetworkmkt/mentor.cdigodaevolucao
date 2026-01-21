@@ -109,20 +109,29 @@ const App: React.FC = () => {
   useEffect(() => {
     if (!user?.id) return;
     
-    // Load Sessions
-    const loadedSessions = loadUserData<ChatSession[]>('sessions', [{
-      id: Date.now().toString(),
-      title: 'Sessão Inicial',
-      messages: [{ id: 'init', role: 'model', text: INITIAL_MESSAGE, timestamp: new Date() }],
-      lastModified: new Date()
-    }]);
+    // Load Sessions with RECOVERY MECHANISM
+    // We pass [] as default to check if it returns valid data, but we handle empty arrays explicitly below
+    let loadedSessions = loadUserData<ChatSession[]>('sessions', []);
+    
+    // CRITICAL FIX: If loaded data is empty (or corrupted to []), force a new session.
+    // This prevents the "Infinite Loading Screen" bug.
+    if (!loadedSessions || loadedSessions.length === 0) {
+       loadedSessions = [{
+          id: Date.now().toString(),
+          title: 'Sessão Inicial',
+          messages: [{ id: 'init', role: 'model', text: INITIAL_MESSAGE, timestamp: new Date() }],
+          lastModified: new Date()
+       }];
+    }
     
     const parsedSessions = loadedSessions.map(s => ({
         ...s,
         lastModified: new Date(s.lastModified),
         messages: s.messages.map(m => ({...m, timestamp: new Date(m.timestamp)}))
     }));
+
     setSessions(parsedSessions);
+    // Ensure activeSessionId is valid
     setActiveSessionId(parsedSessions[0].id);
 
     // Load Maps
@@ -166,7 +175,19 @@ const App: React.FC = () => {
     setSessions(prev => prev.map(s => s.id === updatedSession.id ? updatedSession : s));
   };
 
-  const getActiveSession = () => sessions.find(s => s.id === activeSessionId) || sessions[0];
+  // Safe getter for active session with fallback to prevent crashes
+  const getActiveSession = () => {
+     const found = sessions.find(s => s.id === activeSessionId) || sessions[0];
+     if (found) return found;
+     
+     // Fallback while loading (should rarely be hit now with the fix above)
+     return {
+        id: 'loading',
+        title: 'Carregando...',
+        messages: [],
+        lastModified: new Date()
+     };
+  };
 
   const saveMentalMap = (topic: string, content: string) => {
     const newMap: MentalMapItem = { id: Date.now().toString(), topic, content, createdAt: new Date() };
@@ -269,6 +290,22 @@ const App: React.FC = () => {
          </div>
       </div>
     );
+  }
+
+  // --- LOADING STATE FOR AUTHENTICATED USERS ---
+  // Only show this if sessions are truly empty AND we are waiting for the effect to populate them.
+  // With the fix above, the effect will populate them almost instantly or force a default, breaking this loop.
+  if (user?.id && sessions.length === 0) {
+      return (
+          <div className="flex h-[100dvh] bg-[#0A0A0A] items-center justify-center text-white">
+             <div className="flex flex-col items-center gap-4 animate-pulse">
+                <EagleEmblem points={0} size="md" />
+                <div className="text-[#E50914] font-bold uppercase tracking-widest text-sm flex items-center gap-2">
+                    <Loader2 className="animate-spin" size={16} /> Carregando Diretrizes...
+                </div>
+             </div>
+          </div>
+      );
   }
 
   // --- APP VIEW ---
