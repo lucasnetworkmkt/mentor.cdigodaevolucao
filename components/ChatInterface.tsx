@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Message, ChatSession } from '../types';
 import { generateTextResponse } from '../services/geminiService';
-import { Send, User, Bot, Loader2, Zap } from 'lucide-react';
+import { Send, User, Bot, Loader2, Zap, AlertTriangle } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
 interface ChatInterfaceProps {
@@ -13,6 +13,7 @@ interface ChatInterfaceProps {
 const ChatInterface: React.FC<ChatInterfaceProps> = ({ onAwardPoints, activeSession, onUpdateSession }) => {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [pointNotification, setPointNotification] = useState<{amount: number, reason: string} | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -22,7 +23,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ onAwardPoints, activeSess
 
   useEffect(() => {
     scrollToBottom();
-  }, [activeSession.messages, isLoading]);
+  }, [activeSession.messages, isLoading, error]);
 
   // Effect to clear notification
   useEffect(() => {
@@ -61,10 +62,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ onAwardPoints, activeSess
 
     setInput('');
     setIsLoading(true);
+    setError(null);
 
     try {
-      // BUG FIX: Generate history EXCLUDING the last message we just added.
-      // The service adds the user message explicitly. Sending it twice causes 400 Bad Request.
+      // Generate history EXCLUDING the last message we just added
       const history = updatedMessages.slice(0, -1).map(m => ({
         role: m.role,
         parts: [{ text: m.text }]
@@ -102,9 +103,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ onAwardPoints, activeSess
             lastModified: new Date()
         });
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Chat Error:", error);
-      // Optional: Add visual feedback for error
+      setError(error.message || "Falha na comunicação com o Mentor.");
+      // Optional: Remove the user message if it failed? No, keep it so they can copy/paste.
     } finally {
       setIsLoading(false);
     }
@@ -152,6 +154,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ onAwardPoints, activeSess
             </div>
           </div>
         ))}
+        
         {isLoading && (
           <div className="flex justify-start">
              <div className="bg-[#0F0F0F] border border-[#333] rounded-lg p-4 flex items-center gap-3">
@@ -162,6 +165,17 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ onAwardPoints, activeSess
              </div>
           </div>
         )}
+
+        {error && (
+          <div className="flex justify-center my-4">
+             <div className="bg-red-900/20 border border-red-900/50 rounded-lg p-3 flex items-center gap-2 text-red-500 text-xs font-bold animate-in fade-in">
+                <AlertTriangle size={16} />
+                <span>{error}</span>
+                <button onClick={() => handleSend()} className="ml-2 underline hover:text-white">Tentar Novamente</button>
+             </div>
+          </div>
+        )}
+
         <div ref={messagesEndRef} />
       </div>
 

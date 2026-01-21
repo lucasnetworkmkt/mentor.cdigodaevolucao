@@ -1,8 +1,6 @@
 import { UserProfile } from "../types";
 
 // Keys for LocalStorage
-// NOTE: In a real-world scenario with backend requirements, these would be replaced
-// by API calls to a database (PostgreSQL/Firebase).
 const DB_USERS_KEY = "MENTOR_AUTH_USERS_DB";
 const SESSION_KEY = "MENTOR_AUTH_SESSION_TOKEN";
 
@@ -21,20 +19,43 @@ interface AuthResponse {
   token: string;
 }
 
+// NOTE: Since this is a client-side only deployment in this context (Vite), 
+// we default to LocalStorage. If a real backend URL is provided via ENV, we use that.
+const API_URL = process.env.VITE_API_URL || ''; 
+
 export const authService = {
   /**
    * Registers a new user.
    */
   register: async (name: string, email: string, password: string): Promise<AuthResponse> => {
-    await delay(800); 
+    // If API URL is configured, try to hit the backend
+    if (API_URL) {
+        try {
+            const res = await fetch(`${API_URL}/auth/register`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, email, password })
+            });
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.message || 'Falha no registro remoto.');
+            }
+            const data = await res.json();
+            localStorage.setItem(SESSION_KEY, JSON.stringify(data.user));
+            return data;
+        } catch (e) {
+            console.warn("Backend unavailable, falling back to local storage.", e);
+        }
+    }
 
+    // Local Fallback
+    await delay(800); 
     const usersStr = localStorage.getItem(DB_USERS_KEY);
     const users: any[] = usersStr ? JSON.parse(usersStr) : [];
-
     const normalizedEmail = email.toLowerCase().trim();
 
     if (users.find((u) => u.email === normalizedEmail)) {
-      throw new Error("Este e-mail já está registrado no sistema.");
+      throw new Error("Este e-mail já está registrado no sistema (Local).");
     }
 
     const newUser = {
@@ -55,9 +76,7 @@ export const authService = {
       createdAt: newUser.createdAt,
     };
 
-    // Set session
     localStorage.setItem(SESSION_KEY, JSON.stringify(userProfile));
-
     return { user: userProfile, token: "mock-jwt-token" };
   },
 
@@ -65,12 +84,30 @@ export const authService = {
    * Authenticates an existing user.
    */
   login: async (email: string, password: string): Promise<AuthResponse> => {
-    await delay(800);
+    if (API_URL) {
+        try {
+            const res = await fetch(`${API_URL}/auth/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password })
+            });
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.message || 'Credenciais inválidas.');
+            }
+            const data = await res.json();
+            localStorage.setItem(SESSION_KEY, JSON.stringify(data.user));
+            return data;
+        } catch (e) {
+            console.warn("Backend unavailable, falling back to local storage.", e);
+        }
+    }
 
+    await delay(800);
     const usersStr = localStorage.getItem(DB_USERS_KEY);
     const users: any[] = usersStr ? JSON.parse(usersStr) : [];
-
     const normalizedEmail = email.toLowerCase().trim();
+    
     // Strict comparison
     const user = users.find((u) => u.email === normalizedEmail && u.password === password);
 
@@ -86,7 +123,6 @@ export const authService = {
     };
 
     localStorage.setItem(SESSION_KEY, JSON.stringify(userProfile));
-
     return { user: userProfile, token: "mock-jwt-token" };
   },
 

@@ -3,22 +3,20 @@ import { GoogleGenAI } from "@google/genai";
 import { SYSTEM_INSTRUCTION } from "../constants";
 
 // --- API KEY GROUPS CONFIGURATION ---
-// In a real env, these would be process.env.API_KEY_A1, etc.
-// Fallbacking to process.env.API_KEY for compatibility if specific keys aren't set.
 const DEFAULT_KEY = process.env.API_KEY || '';
 
 const API_GROUPS = {
-  A: [ // Text Chat (Brain)
+  A: [ // Text Chat
     process.env.API_KEY_A1 || DEFAULT_KEY,
     process.env.API_KEY_A2 || DEFAULT_KEY,
     process.env.API_KEY_A3 || DEFAULT_KEY
   ].filter(Boolean),
-  B: [ // Voice (Realtime)
+  B: [ // Voice
     process.env.API_KEY_B1 || DEFAULT_KEY,
     process.env.API_KEY_B2 || DEFAULT_KEY,
     process.env.API_KEY_B3 || DEFAULT_KEY
   ].filter(Boolean),
-  C: [ // Mental Maps (Structured Text)
+  C: [ // Mental Maps
     process.env.API_KEY_C1 || DEFAULT_KEY
   ].filter(Boolean)
 };
@@ -31,7 +29,6 @@ async function executeWithFallback<T>(
   const keys = API_GROUPS[group];
   let lastError: any;
 
-  // Deduplicate keys to avoid retrying the same key if config maps to same env var
   const uniqueKeys = Array.from(new Set(keys));
 
   for (const apiKey of uniqueKeys) {
@@ -41,26 +38,22 @@ async function executeWithFallback<T>(
       console.warn(`API Key in Group ${group} failed. Trying next...`, error);
       lastError = error;
       
-      // Check for specific error types that warrant a retry
-      // 429: Too Many Requests, 503: Service Unavailable, 500: Internal Error
       const status = error?.status || error?.response?.status;
+      // Retry on network errors (5xx) or rate limits (429)
       const isRetryable = !status || [429, 500, 503].includes(status);
       
       if (!isRetryable) {
-         // If it's a client error (e.g., 400), do not retry with other keys
          throw error;
       }
     }
   }
 
-  throw new Error(`Todas as APIs do Grupo ${group} falharam. Erro final: ${lastError?.message}`);
+  throw new Error(`Todas as APIs do Grupo ${group} falharam. Verifique suas chaves. Erro: ${lastError?.message}`);
 }
 
 // --- PUBLIC SERVICES ---
 
 export const getVoiceApiKey = async (): Promise<string> => {
-  // Simple check to return a valid key for the Voice component to initialize its connection.
-  // The Voice component implements its own reconnection logic, but needs a starting key.
   const keys = API_GROUPS.B;
   if (keys.length === 0) throw new Error("No API keys available for Voice (Group B)");
   return keys[0];
@@ -70,19 +63,30 @@ export const generateTextResponse = async (history: {role: string, parts: {text:
   return executeWithFallback('A', async (apiKey) => {
     const ai = new GoogleGenAI({ apiKey });
     
+    // Ensure roles are correct for Gemini API (user/model)
+    // Filter out potential empty messages or errors
+    const validHistory = history.filter(h => h.parts && h.parts[0]?.text);
+
     const contents = [
-      ...history,
+      ...validHistory,
       { role: 'user', parts: [{ text: userMessage }] }
     ];
 
+    // Using gemini-3-flash-preview for speed and reliability.
+    // Removed thinkingConfig as it causes 400 errors without explicit output token limits on some tiers.
     const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
+      model: 'gemini-3-flash-preview', 
       contents: contents,
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
-        thinkingConfig: { thinkingBudget: 2048 },
+        maxOutputTokens: 2048,
+        temperature: 0.7, 
       }
     });
+
+    if (!response.text) {
+        throw new Error("O modelo retornou uma resposta vazia.");
+    }
 
     return response.text;
   });
@@ -119,7 +123,7 @@ export const generateMentalMapStructure = async (topic: string) => {
     `;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash', // Fast and good for structured text
+      model: 'gemini-2.5-flash',
       contents: {
         parts: [{ text: prompt }]
       }
