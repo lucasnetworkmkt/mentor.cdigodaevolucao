@@ -1,0 +1,7 @@
+{
+  "name": "Copy of Copy of Mentor do Código da Evolução(PRINCIPAL ATUAL)",
+  "description": "Sistema de direção, execução e correção baseado no Código da Evolução. Não é um assistente, é um comando.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
