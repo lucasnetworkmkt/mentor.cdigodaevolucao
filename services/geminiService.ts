@@ -2,27 +2,28 @@
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { SYSTEM_INSTRUCTION } from "../constants";
 
-// --- ROBUST KEY EXTRACTION ---
+// --- AGGRESSIVE KEY EXTRACTION ---
 const getEnvVar = (key: string): string => {
-  // 1. Try Vite's import.meta.env (Client Side standard)
-  // @ts-ignore
-  if (typeof import.meta !== 'undefined' && import.meta.env) {
-    // @ts-ignore
-    if (import.meta.env[key]) return import.meta.env[key];
-    // @ts-ignore
-    if (import.meta.env[`VITE_${key}`]) return import.meta.env[`VITE_${key}`];
-  }
+  let value = '';
 
-  // 2. Try process.env (Vercel/Node injection)
+  // 1. Direct process.env check (injected by vite.config.ts define)
   if (typeof process !== 'undefined' && process.env) {
-    if (process.env[key]) return process.env[key] as string;
-    if (process.env[`VITE_${key}`]) return process.env[`VITE_${key}`] as string;
+    if (process.env[key]) value = process.env[key] as string;
+    else if (process.env[`VITE_${key}`]) value = process.env[`VITE_${key}`] as string;
   }
 
-  return '';
+  // 2. Import.meta.env check (Vite standard)
+  if (!value && typeof import.meta !== 'undefined' && (import.meta as any).env) {
+    const env = (import.meta as any).env;
+    if (env[key]) value = env[key];
+    else if (env[`VITE_${key}`]) value = env[`VITE_${key}`];
+  }
+
+  return value || '';
 };
 
 // MASTER KEY (Fallback for everything)
+// We specifically look for 'API_KEY' which we forced in vite.config.ts
 const MAIN_KEY = getEnvVar('API_KEY');
 
 // Helper to get a list of keys or fallback to main
@@ -37,7 +38,6 @@ const getKeys = (prefix: string, count: number): string[] => {
 
   // If no specific keys found, use the Main Key
   if (keys.length === 0 && MAIN_KEY && MAIN_KEY.length > 10) {
-    console.log(`[Mentor System] Usando chave MESTRA para o grupo ${prefix}`);
     keys.push(MAIN_KEY);
   }
 
@@ -50,12 +50,6 @@ const API_GROUPS = {
   C: getKeys('C', 1)  // Maps
 };
 
-// Debug Log (Safe - shows only last 4 chars)
-console.log("[Mentor System] Diagnóstico de Chaves:");
-Object.entries(API_GROUPS).forEach(([group, keys]) => {
-  console.log(`Grupo ${group}: ${keys.length > 0 ? 'ONLINE' : 'OFFLINE'} (${keys.length} chaves disponíveis)`);
-});
-
 // --- FALLBACK LOGIC ---
 async function executeWithFallback<T>(
   group: 'A' | 'B' | 'C',
@@ -64,7 +58,9 @@ async function executeWithFallback<T>(
   const keys = API_GROUPS[group];
   
   if (keys.length === 0) {
-    throw new Error(`ERRO CRÍTICO: Nenhuma Chave de API encontrada para o Grupo ${group}. Configure a variável 'API_KEY' no Vercel.`);
+    // Detailed error for debugging
+    console.error(`[Mentor Error] Missing Keys. Tried: API_KEY, VITE_API_KEY. Found: ${MAIN_KEY ? 'Yes' : 'No'}`);
+    throw new Error(`ERRO DE CONFIGURAÇÃO: Chave API não detectada. Se você configurou 'API_KEY' no Vercel, aguarde o redeploy.`);
   }
 
   let lastError: any;
@@ -74,13 +70,12 @@ async function executeWithFallback<T>(
     try {
       return await operation(apiKey);
     } catch (error: any) {
-      console.warn(`Tentativa falhou no Grupo ${group}. Erro:`, error.message);
+      console.warn(`Tentativa falhou no Grupo ${group}.`, error.message);
       lastError = error;
       
       const status = error.status || error.response?.status;
-      // Don't retry if the key is explicitly invalid (403/400)
       if (status === 403 || error.message?.includes('API key not valid')) {
-         console.error("Chave inválida detectada e ignorada.");
+         console.error("Chave inválida ignorada.");
       }
     }
   }
@@ -90,7 +85,7 @@ async function executeWithFallback<T>(
   if (lastError?.message?.includes('API key')) msg = "Chave de API inválida.";
   if (lastError?.message?.includes('SAFETY')) msg = "Bloqueio de Segurança do Modelo.";
   
-  throw new Error(`${msg} Detalhes: ${lastError?.message || 'Desconhecido'}`);
+  throw new Error(`${msg} (${lastError?.message || 'Erro desconhecido'})`);
 }
 
 // --- PUBLIC SERVICES ---
@@ -98,7 +93,6 @@ async function executeWithFallback<T>(
 export const getVoiceApiKey = async (): Promise<string> => {
   const keys = API_GROUPS.B;
   if (keys.length === 0) {
-     // Last resort fallback
      if (MAIN_KEY) return MAIN_KEY;
      throw new Error("Sistema de Voz sem chave de acesso.");
   }
@@ -122,7 +116,7 @@ export const generateTextResponse = async (history: {role: string, parts: {text:
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
         maxOutputTokens: 2048,
-        temperature: 0.8,
+        temperature: 0.9, // Higher temp for more personality
         safetySettings: [
             { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
             { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -149,7 +143,11 @@ export const generateMentalMapStructure = async (topic: string) => {
 
     const prompt = `
       Crie um MAPA MENTAL ESTRUTURADO em formato de ÁRVORE DE TEXTO (ASCII/Tree Style) sobre: "${topic}".
-      REGRAS: ASCII style (├──), Sem markdown block, Hierárquico, Focado em Ação.
+      REGRAS VISUAIS:
+      - Use caracteres ASCII para conectar: ├──, └──, │.
+      - Não use Markdown code blocks (\`\`\`), apenas o texto puro.
+      - Seja hierárquico, direto e focado em EXECUÇÃO.
+      - Limite a 3 níveis de profundidade.
     `;
 
     const response = await ai.models.generateContent({
